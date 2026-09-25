@@ -32,7 +32,6 @@ def analyze_code(data: dict):
 
     except SyntaxError as error:
         explanation = f"Python found a syntax problem on line {error.lineno}."
-
         fixed_code = None
 
         if error.msg == "'(' was never closed":
@@ -57,6 +56,16 @@ def analyze_code(data: dict):
             suggestion = (
                 "Check that every opening quote has a matching "
                 "closing quote."
+            )
+
+        elif error.msg == "expected ':'":
+            explanation = (
+                "Python expected a colon at the end of a statement "
+                "such as if, for, while, def, or class."
+            )
+
+            suggestion = (
+                "Add ':' at the end of the statement on the reported line."
             )
 
         else:
