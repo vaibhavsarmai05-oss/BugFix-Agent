@@ -12,9 +12,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 def home():
     return {"message": "BugFix Agent is running!"}
+
 
 @app.post("/analyze")
 def analyze_code(data: dict):
@@ -29,6 +31,14 @@ def analyze_code(data: dict):
         }
 
     except SyntaxError as error:
+        explanation = f"Python found a syntax problem on line {error.lineno}."
+
+        if error.msg == "'(' was never closed":
+            explanation = (
+                "An opening parenthesis was found without a matching "
+                "closing parenthesis."
+            )
+
         fixed_code = code
 
         if error.msg == "'(' was never closed":
@@ -37,6 +47,7 @@ def analyze_code(data: dict):
         return {
             "status": "error",
             "message": f"Syntax Error: {error.msg} at line {error.lineno}",
+            "explanation": explanation,
             "suggestion": "Check the brackets, quotes, and punctuation around this line.",
             "fixed_code": fixed_code
-    }
+        }
