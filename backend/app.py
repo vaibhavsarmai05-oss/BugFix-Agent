@@ -33,21 +33,46 @@ def analyze_code(data: dict):
     except SyntaxError as error:
         explanation = f"Python found a syntax problem on line {error.lineno}."
 
+        fixed_code = None
+
         if error.msg == "'(' was never closed":
             explanation = (
                 "An opening parenthesis was found without a matching "
                 "closing parenthesis."
             )
 
-        fixed_code = code
-
-        if error.msg == "'(' was never closed":
             fixed_code = code + ")"
 
-        return {
+            suggestion = (
+                "Add the missing closing parenthesis at the end "
+                "of the statement."
+            )
+
+        elif "unterminated string literal" in error.msg:
+            explanation = (
+                "A string was started with a quote but was not closed "
+                "before the end of the line."
+            )
+
+            suggestion = (
+                "Check that every opening quote has a matching "
+                "closing quote."
+            )
+
+        else:
+            suggestion = (
+                "Check the brackets, quotes, and punctuation around "
+                "the reported line."
+            )
+
+        result = {
             "status": "error",
             "message": f"Syntax Error: {error.msg} at line {error.lineno}",
             "explanation": explanation,
-            "suggestion": "Check the brackets, quotes, and punctuation around this line.",
-            "fixed_code": fixed_code
+            "suggestion": suggestion
         }
+
+        if fixed_code:
+            result["fixed_code"] = fixed_code
+
+        return result
