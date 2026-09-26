@@ -2,6 +2,11 @@ const analyzeBtn = document.getElementById("analyzeBtn");
 const codeInput = document.getElementById("codeInput");
 const message = document.getElementById("message");
 
+// Keep a reference to the last submitted code and proposed fix so the
+// Verify Fix button can access them without re-reading the DOM.
+let _lastSubmittedCode = "";
+let _lastFixedCode = "";
+
 analyzeBtn.addEventListener("click", async function () {
     const code = codeInput.value.trim();
 
@@ -17,6 +22,8 @@ analyzeBtn.addEventListener("click", async function () {
     // ── Loading state ────────────────────────────────────────────────
     setLoading(true);
     message.innerHTML = "";
+    _lastSubmittedCode = code;
+    _lastFixedCode = "";
 
     try {
         const response = await fetch("http://127.0.0.1:8000/analyze", {
@@ -86,24 +93,46 @@ analyzeBtn.addEventListener("click", async function () {
             `;
         }
 
-        // ── Fixed code + Copy button ─────────────────────────────────
+        // ── Proposed fix + Copy + Verify buttons ─────────────────────
         if (data.fixed_code) {
+            _lastFixedCode = data.fixed_code;
             html += `
                 <div class="result-fixed">
-                    <div class="fixed-code-header">
-                        <strong>Fixed Code:</strong>
-                        <button class="copy-btn" id="copyBtn">Copy</button>
+                    <div class="code-card-header">
+                        <strong>Proposed Fix:</strong>
+                        <span class="card-actions">
+                            <button class="copy-btn" id="copyFixedBtn">Copy Fixed Code</button>
+                            <button class="verify-btn" id="verifyBtn">Verify Fix</button>
+                        </span>
                     </div>
                     <pre id="fixedCodePre">${escapeHtml(data.fixed_code)}</pre>
+                </div>
+                <div id="verifyResult"></div>
+            `;
+        }
+
+        // ── Regression test + Copy button ────────────────────────────
+        if (data.regression_test) {
+            html += `
+                <div class="result-regression">
+                    <div class="code-card-header">
+                        <strong>Regression Test:</strong>
+                        <button class="copy-btn" id="copyTestBtn">Copy Regression Test</button>
+                    </div>
+                    <pre id="regressionTestPre">${escapeHtml(data.regression_test)}</pre>
                 </div>
             `;
         }
 
         message.innerHTML = html;
 
-        // Attach copy handler after the HTML is in the DOM
+        // Attach handlers after the HTML is in the DOM ────────────────
         if (data.fixed_code) {
-            attachCopyHandler(data.fixed_code);
+            attachCopyHandler("copyFixedBtn", data.fixed_code);
+            attachVerifyHandler(code, data.fixed_code);
+        }
+        if (data.regression_test) {
+            attachCopyHandler("copyTestBtn", data.regression_test);
         }
 
     } catch (error) {
@@ -142,32 +171,88 @@ function escapeHtml(text) {
 }
 
 /**
- * Wire up the Copy button to write fixedCode to the clipboard.
+ * Wire up a Copy button (by element id) to write `textToCopy` to the clipboard.
  * Falls back gracefully when the Clipboard API is unavailable.
  */
-function attachCopyHandler(fixedCode) {
-    const copyBtn = document.getElementById("copyBtn");
-    if (!copyBtn) return;
+function attachCopyHandler(btnId, textToCopy) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
 
-    copyBtn.addEventListener("click", function () {
+    btn.addEventListener("click", function () {
         if (!navigator.clipboard) {
-            // Clipboard API not available (e.g. non-secure context)
-            copyBtn.textContent = "Copy unavailable";
+            btn.textContent = "Copy unavailable";
             return;
         }
 
-        navigator.clipboard.writeText(fixedCode).then(function () {
-            copyBtn.textContent = "Copied!";
-            copyBtn.disabled = true;
+        navigator.clipboard.writeText(textToCopy).then(function () {
+            btn.textContent = "Copied!";
+            btn.disabled = true;
             setTimeout(function () {
-                copyBtn.textContent = "Copy";
-                copyBtn.disabled = false;
+                btn.textContent = btn.id === "copyFixedBtn"
+                    ? "Copy Fixed Code"
+                    : "Copy Regression Test";
+                btn.disabled = false;
             }, 2000);
         }).catch(function () {
-            copyBtn.textContent = "Copy failed";
+            btn.textContent = "Copy failed";
             setTimeout(function () {
-                copyBtn.textContent = "Copy";
+                btn.textContent = btn.id === "copyFixedBtn"
+                    ? "Copy Fixed Code"
+                    : "Copy Regression Test";
             }, 2000);
         });
+    });
+}
+
+/**
+ * Wire up the Verify Fix button.
+ * POSTs { original_code, fixed_code } to /verify and renders the result
+ * in the #verifyResult placeholder that was injected alongside the fix card.
+ */
+function attachVerifyHandler(originalCode, fixedCode) {
+    const btn = document.getElementById("verifyBtn");
+    const resultDiv = document.getElementById("verifyResult");
+    if (!btn || !resultDiv) return;
+
+    btn.addEventListener("click", async function () {
+        btn.disabled = true;
+        btn.textContent = "Verifying...";
+        resultDiv.innerHTML = "";
+
+        try {
+            const resp = await fetch("http://127.0.0.1:8000/verify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    original_code: originalCode,
+                    fixed_code: fixedCode
+                })
+            });
+
+            const data = await resp.json();
+
+            if (data.success) {
+                let inner = `<strong>&#10003; Verification passed</strong> — the fixed code runs without errors.`;
+                if (data.stdout) {
+                    inner += `<pre>${escapeHtml(data.stdout)}</pre>`;
+                }
+                resultDiv.innerHTML = `<div class="result-verify result-verify-pass">${inner}</div>`;
+            } else {
+                let inner = `<strong>&#10007; Verification failed</strong> — the fixed code still produces an error.`;
+                if (data.error) {
+                    inner += `<pre>${escapeHtml(data.error)}</pre>`;
+                }
+                resultDiv.innerHTML = `<div class="result-verify result-verify-fail">${inner}</div>`;
+            }
+        } catch (_) {
+            resultDiv.innerHTML = `
+                <div class="result-verify result-verify-fail">
+                    <strong>Could not connect to the backend for verification.</strong>
+                </div>
+            `;
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "Verify Fix";
+        }
     });
 }

@@ -1,9 +1,16 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import ast
+import sys
+import os
 
 from ai_service import analyze_with_ai
 from runner import run_code
+
+# core/ lives one level above backend/
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from core.fixer import propose_fix
+from core.test_generator import generate_regression_test
 
 app = FastAPI(title="BugFix Agent")
 
@@ -115,7 +122,7 @@ def analyze_code(data: dict):
         return response
 
     # ------------------------------------------------------------------
-    # Phase 3 — Runtime error: analyse and explain
+    # Phase 3 — Runtime error: analyse, explain, and propose a fix
     # ------------------------------------------------------------------
     error_summary = run_result["error"]   # e.g. "ZeroDivisionError: division by zero"
 
@@ -125,13 +132,30 @@ def analyze_code(data: dict):
     # clean line references rather than internal /tmp/... paths.
     clean_traceback = _clean_traceback(run_result["stderr"])
 
-    return {
+    response = {
         "status": "error",
         "message": error_summary if error_summary else "Runtime error occurred.",
         "explanation": ai["explanation"],
         "suggestion": ai["suggestion"],
         "stderr": clean_traceback,
     }
+
+    # Ask the fixer whether it can propose a safe, deterministic fix.
+    # The fixer never executes code — verification is a separate /verify step.
+    fix = propose_fix(code, error_summary)
+    if fix["success"]:
+        response["fixed_code"] = fix["fixed_code"]
+        response["fix_message"] = fix["message"]
+        response["fix_explanation"] = fix["explanation"]
+
+    # Ask the test generator for a regression test.
+    # If generation is unsupported we silently continue — the caller receives
+    # all existing fields unchanged.
+    test_gen = generate_regression_test(code, error_summary)
+    if test_gen["success"]:
+        response["regression_test"] = test_gen["test_code"]
+
+    return response
 
 
 # ----------------------------------------------------------------------
