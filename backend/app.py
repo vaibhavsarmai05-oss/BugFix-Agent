@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 import ast
 import sys
 import os
@@ -12,7 +14,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from core.fixer import propose_fix
 from core.test_generator import generate_regression_test
 
-app = FastAPI(title="BugFix Agent")`r`n`r`napp.mount("/static", StaticFiles(directory="frontend"), name="static")
+app = FastAPI(title="BugFix Agent")
+
+# Serve frontend CSS and JavaScript
+frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
+app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,215 +30,70 @@ app.add_middleware(
 )
 
 
-from fastapi.responses import FileResponse`r`nfrom fastapi.staticfiles import StaticFiles
 @app.get("/")
 def home():
-    return FileResponse("frontend/index.html")
+    return FileResponse(
+        os.path.join(frontend_dir, "index.html")
+    )
+
+
 @app.post("/analyze")
 def analyze_code(data: dict):
     code = data.get("code", "")
 
-    # ------------------------------------------------------------------
-    # Phase 1 — Syntax check (fast, no subprocess needed)
-    # ------------------------------------------------------------------
     try:
         ast.parse(code)
-    except SyntaxError as error:
-        explanation = f"Python found a syntax problem on line {error.lineno}."
-        fixed_code = None
-
-        if error.msg == "'(' was never closed":
-            explanation = (
-                "An opening parenthesis was found without a matching "
-                "closing parenthesis."
-            )
-            fixed_code = code + ")"
-            suggestion = (
-                "Add the missing closing parenthesis at the end "
-                "of the statement."
-            )
-
-        elif "unterminated string literal" in error.msg:
-            explanation = (
-                "A string was started with a quote but was not closed "
-                "before the end of the line."
-            )
-            suggestion = (
-                "Check that every opening quote has a matching "
-                "closing quote."
-            )
-
-        elif error.msg == "expected ':'":
-            explanation = (
-                "Python expected a colon at the end of a statement "
-                "such as if, for, while, def, or class."
-            )
-            suggestion = (
-                "Add ':' at the end of the statement on the reported line."
-            )
-
-        else:
-            suggestion = (
-                "Check the brackets, quotes, and punctuation around "
-                "the reported line."
-            )
-
-        result = {
-            "status": "error",
-            "message": f"Syntax Error: {error.msg} at line {error.lineno}",
-            "explanation": explanation,
-            "suggestion": suggestion,
-        }
-
-        if fixed_code:
-            result["fixed_code"] = fixed_code
-
-        return result
-
-    # ------------------------------------------------------------------
-    # Phase 2 — Execute in an isolated subprocess
-    # ------------------------------------------------------------------
-    run_result = run_code(code)
-
-    # Timeout — report clearly without exposing filesystem internals
-    if run_result["timed_out"]:
+    except SyntaxError as e:
         return {
-            "status": "error",
-            "message": "Execution timed out after 5 seconds.",
-            "explanation": (
-                "The code did not finish within the 5-second time limit. "
-                "This usually means there is an infinite loop or a blocking "
-                "operation that never completes."
-            ),
-            "suggestion": (
-                "Look for `while True` loops or recursive calls that have "
-                "no exit condition. Make sure every loop has a reachable "
-                "termination point."
-            ),
+            "success": False,
+            "type": "syntax_error",
+            "message": f"Syntax Error: {e.msg} at line {e.lineno}",
+            "error": str(e),
         }
 
-    # Clean execution — code ran without errors
-    if run_result["success"]:
-        response = {
-            "status": "success",
-            "message": "Code executed successfully with no errors.",
+    result = run_code(code)
+
+    if result["success"]:
+        return {
+            "success": True,
+            "message": "Code executed successfully.",
+            "stdout": result.get("stdout", ""),
         }
-        if run_result["stdout"].strip():
-            response["stdout"] = run_result["stdout"]
-        return response
 
-    # ------------------------------------------------------------------
-    # Phase 3 — Runtime error: analyse, explain, and propose a fix
-    # ------------------------------------------------------------------
-    error_summary = run_result["error"]   # e.g. "ZeroDivisionError: division by zero"
+    error = result.get("error", "")
 
-    ai = analyze_with_ai(code, error_summary)
+    ai_analysis = analyze_with_ai(code, str(error))
 
-    # Strip temp-file paths from the traceback so the user sees
-    # clean line references rather than internal /tmp/... paths.
-    clean_traceback = _clean_traceback(run_result["stderr"])
+    fixed_code = propose_fix(code, error)
 
-    response = {
-        "status": "error",
-        "message": error_summary if error_summary else "Runtime error occurred.",
-        "explanation": ai["explanation"],
-        "suggestion": ai["suggestion"],
-        "stderr": clean_traceback,
+    regression_test = generate_regression_test(code, str(error))
+
+    return {
+        "success": False,
+        "type": "runtime_error",
+        "message": ai_analysis,
+        "error": error,
+        "fixed_code": fixed_code,
+        "regression_test": regression_test,
     }
 
-    # Ask the fixer whether it can propose a safe, deterministic fix.
-    # The fixer never executes code — verification is a separate /verify step.
-    fix = propose_fix(code, error_summary)
-    if fix["success"]:
-        response["fixed_code"] = fix["fixed_code"]
-        response["fix_message"] = fix["message"]
-        response["fix_explanation"] = fix["explanation"]
-
-    # Ask the test generator for a regression test.
-    # If generation is unsupported we silently continue — the caller receives
-    # all existing fields unchanged.
-    test_gen = generate_regression_test(code, error_summary)
-    if test_gen["success"]:
-        response["regression_test"] = test_gen["test_code"]
-
-    return response
-
-
-# ----------------------------------------------------------------------
-# Verify endpoint
-# ----------------------------------------------------------------------
 
 @app.post("/verify")
 def verify_fix(data: dict):
-    """
-    Run the caller-supplied fixed code in an isolated subprocess and
-    report whether it executes cleanly.
-
-    Expected request body:
-        {
-            "original_code": "...",   # kept for audit; not executed here
-            "fixed_code":    "..."    # this is what gets run
-        }
-    """
+    original_code = data.get("original_code", "")
     fixed_code = data.get("fixed_code", "")
 
-    run_result = run_code(fixed_code)
+    result = run_code(fixed_code)
 
-    # Timeout
-    if run_result["timed_out"]:
+    if result["success"]:
         return {
-            "status": "error",
-            "success": False,
-            "message": "Verification timed out after 5 seconds.",
-            "timed_out": True,
+            "success": True,
+            "stdout": result.get("stdout", ""),
         }
 
-    # Fixed code still fails
-    if not run_result["success"]:
-        response = {
-            "status": "error",
-            "success": False,
-            "message": "The fixed code still produces an error.",
-            "timed_out": False,
-            "error": run_result["error"],
-        }
-        if run_result["stdout"].strip():
-            response["stdout"] = run_result["stdout"]
-        return response
-
-    # Fixed code runs cleanly
-    response = {
-        "status": "success",
-        "success": True,
-        "message": "Fixed code executed successfully with no errors.",
-        "timed_out": False,
+    return {
+        "success": False,
+        "error": result.get("error", ""),
     }
-    if run_result["stdout"].strip():
-        response["stdout"] = run_result["stdout"]
-    return response
-
-
-# ----------------------------------------------------------------------
-# Helpers
-# ----------------------------------------------------------------------
-
-def _clean_traceback(stderr: str) -> str:
-    """
-    Remove the absolute temp-file path from traceback lines so the
-    user sees  File "script.py", line N  rather than the full system path.
-
-    Example input line:
-        File "/tmp/tmpABC123.py", line 3, in <module>
-    Becomes:
-        File "script.py", line 3, in <module>
-    """
-    import re
-    # Match the quoted path on a traceback File line and replace it.
-    return re.sub(
-        r'File "[^"]*[\\/]([^\\/]+\.py)"',
-        r'File "script.py"',
-        stderr,
-    )
-
 
 

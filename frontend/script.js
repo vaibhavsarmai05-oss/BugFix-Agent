@@ -1,259 +1,209 @@
 const analyzeBtn = document.getElementById("analyzeBtn");
 const codeInput = document.getElementById("codeInput");
-const message = document.getElementById("message");
+const result = document.getElementById("result");
 
-// Keep a reference to the last submitted code and proposed fix so the
-// Verify Fix button can access them without re-reading the DOM.
-let _lastSubmittedCode = "";
-let _lastFixedCode = "";
-
-analyzeBtn.addEventListener("click", async function () {
-    const code = codeInput.value.trim();
-
-    if (code === "") {
-        message.innerHTML = `
-            <div class="result-error">
-                <strong>Please paste some code first.</strong>
-            </div>
-        `;
-        return;
-    }
-
-    // ── Loading state ────────────────────────────────────────────────
-    setLoading(true);
-    message.innerHTML = "";
-    _lastSubmittedCode = code;
-    _lastFixedCode = "";
-
-    try {
-        const response = await fetch("https://ibm-bob-hackathon-mdtabwydg-vaibhav-sarmai.vercel.app/analyze", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ code: code })
-        });
-
-        const data = await response.json();
-
-        // ── Success ──────────────────────────────────────────────────
-        if (data.status === "success") {
-            let html = `
-                <div class="result-fixed">
-                    <strong>&#10003; ${escapeHtml(data.message)}</strong>
-                </div>
-            `;
-            if (data.stdout) {
-                html += `
-                    <div class="result-suggestion">
-                        <strong>Output:</strong>
-                        <pre>${escapeHtml(data.stdout)}</pre>
-                    </div>
-                `;
-            }
-            message.innerHTML = html;
-            return;
-        }
-
-        // ── Error header ─────────────────────────────────────────────
-        let html = `
-            <div class="result-error">
-                <strong>Issue:</strong> ${escapeHtml(data.message)}
-            </div>
-        `;
-
-        // ── Issues list (optional array field) ───────────────────────
-        if (Array.isArray(data.issues) && data.issues.length > 0) {
-            const items = data.issues
-                .map(issue => `<li>${escapeHtml(String(issue))}</li>`)
-                .join("");
-            html += `
-                <div class="result-issues">
-                    <strong>Issues found:</strong>
-                    <ul class="issues-list">${items}</ul>
-                </div>
-            `;
-        }
-
-        // ── Explanation ──────────────────────────────────────────────
-        if (data.explanation) {
-            html += `
-                <div class="result-suggestion">
-                    <strong>Explanation:</strong> ${escapeHtml(data.explanation)}
-                </div>
-            `;
-        }
-
-        // ── Suggestion ───────────────────────────────────────────────
-        if (data.suggestion) {
-            html += `
-                <div class="result-suggestion">
-                    <strong>Suggestion:</strong> ${escapeHtml(data.suggestion)}
-                </div>
-            `;
-        }
-
-        // ── Proposed fix + Copy + Verify buttons ─────────────────────
-        if (data.fixed_code) {
-            _lastFixedCode = data.fixed_code;
-            html += `
-                <div class="result-fixed">
-                    <div class="code-card-header">
-                        <strong>Proposed Fix:</strong>
-                        <span class="card-actions">
-                            <button class="copy-btn" id="copyFixedBtn">Copy Fixed Code</button>
-                            <button class="verify-btn" id="verifyBtn">Verify Fix</button>
-                        </span>
-                    </div>
-                    <pre id="fixedCodePre">${escapeHtml(data.fixed_code)}</pre>
-                </div>
-                <div id="verifyResult"></div>
-            `;
-        }
-
-        // ── Regression test + Copy button ────────────────────────────
-        if (data.regression_test) {
-            html += `
-                <div class="result-regression">
-                    <div class="code-card-header">
-                        <strong>Regression Test:</strong>
-                        <button class="copy-btn" id="copyTestBtn">Copy Regression Test</button>
-                    </div>
-                    <pre id="regressionTestPre">${escapeHtml(data.regression_test)}</pre>
-                </div>
-            `;
-        }
-
-        message.innerHTML = html;
-
-        // Attach handlers after the HTML is in the DOM ────────────────
-        if (data.fixed_code) {
-            attachCopyHandler("copyFixedBtn", data.fixed_code);
-            attachVerifyHandler(code, data.fixed_code);
-        }
-        if (data.regression_test) {
-            attachCopyHandler("copyTestBtn", data.regression_test);
-        }
-
-    } catch (error) {
-        message.innerHTML = `
-            <div class="result-error">
-                <strong>Could not connect to the backend.</strong>
-            </div>
-        `;
-    } finally {
-        // ── Always restore button ────────────────────────────────────
-        setLoading(false);
-    }
-});
-
-
-// ── Helpers ──────────────────────────────────────────────────────────
-
-/**
- * Enable or disable the loading state on the Analyze button.
- */
-function setLoading(isLoading) {
-    analyzeBtn.disabled = isLoading;
-    analyzeBtn.textContent = isLoading ? "Analyzing..." : "Analyze Code";
-}
-
-/**
- * Escape special HTML characters to prevent XSS from user-supplied code.
- */
 function escapeHtml(text) {
+    if (text === null || text === undefined) return "";
+
     return String(text)
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
+        .replace(/'/g, "&#039;");
 }
 
-/**
- * Wire up a Copy button (by element id) to write `textToCopy` to the clipboard.
- * Falls back gracefully when the Clipboard API is unavailable.
- */
-function attachCopyHandler(btnId, textToCopy) {
-    const btn = document.getElementById(btnId);
-    if (!btn) return;
+function formatAnalysis(message) {
+    if (typeof message === "object" && message !== null) {
+        let output = "";
 
-    btn.addEventListener("click", function () {
-        if (!navigator.clipboard) {
-            btn.textContent = "Copy unavailable";
+        if (message.explanation) {
+            output += `<p><strong>Explanation:</strong> ${escapeHtml(message.explanation)}</p>`;
+        }
+
+        if (message.suggestion) {
+            output += `<p><strong>Suggestion:</strong> ${escapeHtml(message.suggestion)}</p>`;
+        }
+
+        if (!output) {
+            output = escapeHtml(JSON.stringify(message));
+        }
+
+        return output;
+    }
+
+    return escapeHtml(message);
+}
+
+function getFixedCode(fixedCode) {
+    if (typeof fixedCode === "object" && fixedCode !== null) {
+        return fixedCode.fixed_code || "";
+    }
+
+    return fixedCode || "";
+}
+
+function getRegressionTest(test) {
+    if (typeof test === "object" && test !== null) {
+        return test.test_code || "";
+    }
+
+    return test || "";
+}
+
+analyzeBtn.addEventListener("click", async () => {
+    const code = codeInput.value.trim();
+
+    if (!code) {
+        alert("Please enter some Python code.");
+        return;
+    }
+
+    result.innerHTML = "<p>Analyzing code...</p>";
+
+    try {
+        const response = await fetch("/analyze", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                code: code
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            result.innerHTML = `
+                <h2>Analysis</h2>
+                <p><strong>Status:</strong> Code executed successfully.</p>
+                <pre>${escapeHtml(data.stdout || "")}</pre>
+            `;
+
             return;
         }
 
-        navigator.clipboard.writeText(textToCopy).then(function () {
-            btn.textContent = "Copied!";
-            btn.disabled = true;
-            setTimeout(function () {
-                btn.textContent = btn.id === "copyFixedBtn"
-                    ? "Copy Fixed Code"
-                    : "Copy Regression Test";
-                btn.disabled = false;
-            }, 2000);
-        }).catch(function () {
-            btn.textContent = "Copy failed";
-            setTimeout(function () {
-                btn.textContent = btn.id === "copyFixedBtn"
-                    ? "Copy Fixed Code"
-                    : "Copy Regression Test";
-            }, 2000);
-        });
-    });
-}
+        const fixedCode = getFixedCode(data.fixed_code);
+        const regressionTest = getRegressionTest(data.regression_test);
 
-/**
- * Wire up the Verify Fix button.
- * POSTs { original_code, fixed_code } to /verify and renders the result
- * in the #verifyResult placeholder that was injected alongside the fix card.
- */
-function attachVerifyHandler(originalCode, fixedCode) {
-    const btn = document.getElementById("verifyBtn");
-    const resultDiv = document.getElementById("verifyResult");
-    if (!btn || !resultDiv) return;
+        let html = `
+            <h2>Analysis</h2>
 
-    btn.addEventListener("click", async function () {
-        btn.disabled = true;
-        btn.textContent = "Verifying...";
-        resultDiv.innerHTML = "";
+            <p><strong>Issue:</strong> ${escapeHtml(data.error || data.message)}</p>
 
-        try {
-            const resp = await fetch("https://ibm-bob-hackathon-mdtabwydg-vaibhav-sarmai.vercel.app/verify", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    original_code: originalCode,
-                    fixed_code: fixedCode
-                })
-            });
+            <div>
+                ${formatAnalysis(data.message)}
+            </div>
+        `;
 
-            const data = await resp.json();
+        if (fixedCode) {
+            html += `
+                <h3>Proposed Fix:</h3>
 
-            if (data.success) {
-                let inner = `<strong>&#10003; Verification passed</strong> — the fixed code runs without errors.`;
-                if (data.stdout) {
-                    inner += `<pre>${escapeHtml(data.stdout)}</pre>`;
-                }
-                resultDiv.innerHTML = `<div class="result-verify result-verify-pass">${inner}</div>`;
-            } else {
-                let inner = `<strong>&#10007; Verification failed</strong> — the fixed code still produces an error.`;
-                if (data.error) {
-                    inner += `<pre>${escapeHtml(data.error)}</pre>`;
-                }
-                resultDiv.innerHTML = `<div class="result-verify result-verify-fail">${inner}</div>`;
-            }
-        } catch (_) {
-            resultDiv.innerHTML = `
-                <div class="result-verify result-verify-fail">
-                    <strong>Could not connect to the backend for verification.</strong>
-                </div>
+                <pre id="fixedCode">${escapeHtml(fixedCode)}</pre>
+
+                <button id="copyFixBtn">Copy Fixed Code</button>
+                <button id="verifyBtn">Verify Fix</button>
             `;
-        } finally {
-            btn.disabled = false;
-            btn.textContent = "Verify Fix";
+        } else {
+            html += `
+                <h3>Proposed Fix:</h3>
+                <p>${escapeHtml(
+                    data.fixed_code?.message ||
+                    "No automatic fix is available."
+                )}</p>
+            `;
         }
-    });
-}
 
+        if (regressionTest) {
+            html += `
+                <h3>Regression Test:</h3>
+
+                <pre id="regressionTest">${escapeHtml(regressionTest)}</pre>
+
+                <button id="copyTestBtn">Copy Regression Test</button>
+            `;
+        }
+
+        result.innerHTML = html;
+
+        const copyFixBtn = document.getElementById("copyFixBtn");
+
+        if (copyFixBtn) {
+            copyFixBtn.addEventListener("click", async () => {
+                await navigator.clipboard.writeText(fixedCode);
+                copyFixBtn.textContent = "Copied!";
+            });
+        }
+
+        const verifyBtn = document.getElementById("verifyBtn");
+
+        if (verifyBtn) {
+            verifyBtn.addEventListener("click", async () => {
+                verifyBtn.textContent = "Verifying...";
+
+                try {
+                    const verifyResponse = await fetch("/verify", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            original_code: code,
+                            fixed_code: fixedCode
+                        })
+                    });
+
+                    const verifyData = await verifyResponse.json();
+
+                    if (verifyData.success) {
+                        verifyBtn.textContent = "✓ Fix Verified";
+
+                        const verification = document.createElement("p");
+                        verification.innerHTML =
+                            "<strong>Verification:</strong> Fix executed successfully.";
+
+                        result.appendChild(verification);
+
+                        if (verifyData.stdout) {
+                            const output = document.createElement("pre");
+                            output.textContent = verifyData.stdout;
+                            result.appendChild(output);
+                        }
+                    } else {
+                        verifyBtn.textContent = "Verify Fix";
+
+                        const error = document.createElement("p");
+                        error.innerHTML =
+                            `<strong>Verification failed:</strong> ${escapeHtml(verifyData.error)}`;
+
+                        result.appendChild(error);
+                    }
+                } catch (error) {
+                    console.error(error);
+                    verifyBtn.textContent = "Verify Fix";
+                    alert("Could not verify the fix.");
+                }
+            });
+        }
+
+        const copyTestBtn = document.getElementById("copyTestBtn");
+
+        if (copyTestBtn) {
+            copyTestBtn.addEventListener("click", async () => {
+                await navigator.clipboard.writeText(regressionTest);
+                copyTestBtn.textContent = "Copied!";
+            });
+        }
+
+    } catch (error) {
+        console.error(error);
+
+        result.innerHTML = `
+            <h2>Error</h2>
+            <p>Could not connect to BugFix Agent.</p>
+            <p>${escapeHtml(error.message)}</p>
+        `;
+    }
+});
