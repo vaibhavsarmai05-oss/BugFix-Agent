@@ -4,8 +4,8 @@ import ast
 import sys
 import os
 
-from ai_service import analyze_with_ai
-from runner import run_code
+from backend.ai_service import analyze_with_ai
+from backend.runner import run_code
 
 # core/ lives one level above backend/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
