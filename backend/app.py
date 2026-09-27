@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from core.fixer import propose_fix
 from core.test_generator import generate_regression_test
 
-app = FastAPI(title="BugFix Agent")
+app = FastAPI(title="BugFix Agent")`r`n`r`napp.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,7 +23,7 @@ app.add_middleware(
 )
 
 
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse`r`nfrom fastapi.staticfiles import StaticFiles
 @app.get("/")
 def home():
     return FileResponse("frontend/index.html")
@@ -232,5 +232,6 @@ def _clean_traceback(stderr: str) -> str:
         r'File "script.py"',
         stderr,
     )
+
 
 
