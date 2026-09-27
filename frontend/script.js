@@ -26,7 +26,7 @@ analyzeBtn.addEventListener("click", async function () {
     _lastFixedCode = "";
 
     try {
-        const response = await fetch("http://127.0.0.1:8000/analyze", {
+        const response = await fetch("https://ibm-bob-hackathon-mdtabwydg-vaibhav-sarmai.vercel.app/analyze", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
@@ -220,7 +220,7 @@ function attachVerifyHandler(originalCode, fixedCode) {
         resultDiv.innerHTML = "";
 
         try {
-            const resp = await fetch("http://127.0.0.1:8000/verify", {
+            const resp = await fetch("https://ibm-bob-hackathon-mdtabwydg-vaibhav-sarmai.vercel.app/verify", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -256,3 +256,4 @@ function attachVerifyHandler(originalCode, fixedCode) {
         }
     });
 }
+

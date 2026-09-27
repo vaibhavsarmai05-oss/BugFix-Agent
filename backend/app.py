@@ -23,11 +23,10 @@ app.add_middleware(
 )
 
 
+from fastapi.responses import FileResponse
 @app.get("/")
 def home():
-    return {"message": "BugFix Agent is running!"}
-
-
+    return FileResponse("frontend/index.html")
 @app.post("/analyze")
 def analyze_code(data: dict):
     code = data.get("code", "")
@@ -233,3 +232,5 @@ def _clean_traceback(stderr: str) -> str:
         r'File "script.py"',
         stderr,
     )
+
+
